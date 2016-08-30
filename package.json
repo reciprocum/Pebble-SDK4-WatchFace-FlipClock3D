@@ -1,14 +1,6 @@
 {
     "author": "Karambola",
-    "dependencies": {
-        "cam3d": "https://builds-beta.cloudpebble.net/a8bc475c-6955-4798-bd4a-af00e0657125/package.tar.gz",
-        "clock3d": "https://builds-beta.cloudpebble.net/d959aad7-b5f8-4f42-8556-7ea27a7f7a62/package.tar.gz",
-        "fastmath": "https://builds-beta.cloudpebble.net/08582469-f046-49d4-b713-15a09d147eec/package.tar.gz",
-        "interpolator": "https://builds-beta.cloudpebble.net/22d2a174-e481-467a-ba29-a5388befc3aa/package.tar.gz",
-        "r3": "https://builds-beta.cloudpebble.net/188fc08f-4e2d-4ce3-aaef-9eb890592daa/package.tar.gz",
-        "sampler": "https://builds-beta.cloudpebble.net/ccec4517-b2e8-4620-96a9-ab609745d36f/package.tar.gz",
-        "transformr3": "https://builds-beta.cloudpebble.net/54e8b2f0-25fb-4478-bee4-cd9fa6217c87/package.tar.gz"
-    },
+    "dependencies": {},
     "keywords": [],
     "name": "flipclock3d",
     "pebble": {

@@ -1,6 +1,7 @@
 /*
-   File  : Config.h
-   Author: Afonso Santos, Portugal
+   Project: FlipClock3D (watchface)
+   File   : Config.h
+   Author : Afonso Santos, Portugal
 
    Last revision: 17h25 August 09 2016
 */
@@ -11,7 +12,7 @@
 //#define LOG
 
 // Commenting the next line will enable antialised and thick strokes.
-#define QEMU
+//#define QEMU
 
 // Uncoment next line to "fake" running on APLITE/DIORITE B&W platforms.
 //#undef PBL_COLOR

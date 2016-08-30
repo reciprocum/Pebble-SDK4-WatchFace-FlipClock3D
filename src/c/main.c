@@ -3,24 +3,28 @@
    File   : main.c
    Author : Afonso Santos, Portugal
 
-   Last revision: 09h45 August 22 2016
+   Last revision: 19h15 August 29 2016
 */
 
 #include <pebble.h>
-#include <fastmath/FastMath.h>
-#include <r3/R3.h>
-#include <interpolator/Interpolator.h>
-#include <cam3d/Cam3D.h>
-#include <transformr3/TransformR3.h>
-#include <sampler/Sampler.h>
-#include <clock3d/Clock3D.h>
+#include <karambola/FastMath.h>
+#include <karambola/R3.h>
+#include <karambola/Interpolator.h>
+#include <karambola/CamR3.h>
+#include <karambola/TransformR3.h>
+#include <karambola/Sampler.h>
+#include <karambola/Clock3D.h>
 
 #include "Config.h"
 
+// Obstruction related.
+GSize unobstructed_screen ;
+
 
 // UI related
-static Window  *window ;
-static Layer   *world_layer ;
+static Window  *s_window ;
+static Layer   *s_window_layer ;
+static Layer   *s_world_layer ;
 
 
 // User related
@@ -28,6 +32,9 @@ static Layer   *world_layer ;
 
 // World related
 #define ACCEL_SAMPLER_CAPACITY    8
+
+static Clock3D s_clock ;  // The main/only world object.
+
 
 typedef enum { WORLD_MODE_UNDEFINED
              , WORLD_MODE_LAUNCH
@@ -37,18 +44,15 @@ typedef enum { WORLD_MODE_UNDEFINED
              }
 WorldMode ;
 
-//OPTION #define TRANSPARENCY_DEFAULT      MESH3D_TRANSPARENCY_XRAY
-//OPTION #define TRANSPARENCY_DEFAULT      MESH3D_TRANSPARENCY_WIREFRAME
-#define TRANSPARENCY_DEFAULT      MESH3D_TRANSPARENCY_SOLID
+#define TRANSPARENCY_DEFAULT      MESH_TRANSPARENCY_SOLID
 
 // Animation related
 #define ANIMATION_INTERVAL_MS     40
 #define ANIMATION_FLIP_STEPS      50
 #define ANIMATION_SPIN_STEPS      75
 
-static int        world_draw_count    = 0 ;
-static WorldMode  world_mode          = WORLD_MODE_UNDEFINED ;
-static AppTimer  *world_updateTimer   = NULL ;
+static WorldMode  s_world_mode          = WORLD_MODE_UNDEFINED ;
+static AppTimer  *s_world_updateTimer   = NULL ;
 
 Sampler   *sampler_accelX = NULL ;            // To be allocated at world_initialize( ).
 Sampler   *sampler_accelY = NULL ;            // To be allocated at world_initialize( ).
@@ -59,7 +63,7 @@ float     *animRotationFraction    = NULL ;   // To be allocated at world_initia
 float     *animTranslationFraction = NULL ;   // To be allocated at world_initialize( ).
 
 // User related
-static int  user_secondsInactive  = 0 ;
+static int  s_user_secondsInactive  = 0 ;
 
 
 // Spin(Z) CONSTANTS & variables
@@ -67,16 +71,16 @@ static int  user_secondsInactive  = 0 ;
 #define   SPIN_ROTATION_STEADY   -DEG_045
 #define   SPIN_SPEED_AFTER_TWIST  400
 
-static int     spin_speed     = 0 ;                      // Initial spin speed.
-static float   spin_rotation  = SPIN_ROTATION_STEADY ;   // Initial spin rotation angle allows to view hours/minutes/seconds faces.
+static int     s_spin_speed     = 0 ;                      // Initial spin speed.
+static float   s_spin_rotation  = SPIN_ROTATION_STEADY ;   // Initial spin rotation angle allows to view hours/minutes/seconds faces.
 
 
 // Camera related
 #define  CAM3D_DISTANCEFROMORIGIN   (2.2 * CUBE_SIZE)
 #define  CAM3D_VIEWPOINT_STEADY     (R3){ .x = -0.1, .y = 1.0, .z = 0.7 }
 
-static Cam3D    cam ;
-static float    cam_zoom = PBL_IF_RECT_ELSE(1.25, 1.14) ;
+static CamR3    s_cam ;
+static float    s_cam_zoom = PBL_IF_RECT_ELSE(1.25, 1.14) ;
 
 
 // Forward declarations.
@@ -107,9 +111,9 @@ accel_tap_service_handler
 , int32_t        direction   // Direction is 1 or -1
 )
 {
-  user_secondsInactive = 0 ;      // Tap event qualifies as active user interaction.
+  s_user_secondsInactive = 0 ;      // Tap event qualifies as active user interaction.
 
-  switch (world_mode)
+  switch (s_world_mode)
   {
     case WORLD_MODE_LAUNCH:
     case WORLD_MODE_PARK:
@@ -117,11 +121,11 @@ accel_tap_service_handler
       switch (axis)
       {
         case ACCEL_AXIS_X:    // Punch: animate everything.
-          Clock3D_animateAll( ) ;
+          Clock3D_animateAll( &s_clock ) ;
           break ;
 
         case ACCEL_AXIS_Y:    // Twist: spin.
-          spin_speed = SPIN_SPEED_AFTER_TWIST ;
+          s_spin_speed = SPIN_SPEED_AFTER_TWIST ;
           break ;
 
         case ACCEL_AXIS_Z:
@@ -135,7 +139,7 @@ accel_tap_service_handler
       switch (axis)
       {
         case ACCEL_AXIS_X:    // Punch: change the display type.
-          Clock3D_cycleDisplayType( ) ;
+          Clock3D_cycleDigitType( &s_clock ) ;
           clock_updateTime( ) ;
           break ;
 
@@ -163,27 +167,28 @@ tick_timer_service_handler
 , TimeUnits  units_changed
 )
 {
-  Clock3D_setTime_DDHHMMSS( tick_time->tm_mday   // days
+  Clock3D_setTime_DDHHMMSS( &s_clock
+                          , tick_time->tm_mday   // days
                           , tick_time->tm_hour   // hours
                           , tick_time->tm_min    // minutes
                           , tick_time->tm_sec    // seconds
                           ) ;
 
-  if (world_mode == WORLD_MODE_DYNAMIC)
+  if (s_world_mode == WORLD_MODE_DYNAMIC)
   {
-    if (spin_speed == 0)
-      ++user_secondsInactive ;
+    if (s_spin_speed == 0)
+      ++s_user_secondsInactive ;
   
     // Auto-exit DYNAMIC mode on lack of user interaction.
-    if (user_secondsInactive > USER_SECONDSINACTIVE_MAX)
+    if (s_user_secondsInactive > USER_SECONDSINACTIVE_MAX)
       set_world_mode( WORLD_MODE_PARK ) ;
   }
 
   // Trigger call to world update. Will launch dynamic mode if needed.
-  if (world_updateTimer != NULL)
-    app_timer_reschedule( world_updateTimer, 0 ) ;                           // Reschedule next world update.
+  if (s_world_updateTimer != NULL)
+    app_timer_reschedule( s_world_updateTimer, 0 ) ;                           // Reschedule next world update.
   else
-    world_updateTimer = app_timer_register( 0, world_update_timer_handler, NULL ) ;   // Schedule next world update.
+    s_world_updateTimer = app_timer_register( 0, world_update_timer_handler, NULL ) ;   // Schedule next world update.
 }
 
 
@@ -193,7 +198,7 @@ clock_updateTime
 {
   time_t now ;
   time( &now ) ;
-  tick_timer_service_handler( localtime( &now ), 0 ) ;        // To set clock digits & dials with current time.
+  tick_timer_service_handler( localtime( &now ), 0 ) ;        // To set s_clock digits & dials with current time.
 }
 
 
@@ -204,14 +209,14 @@ cam_config
 )
 {
   // setup 3D camera
-  Cam3D_lookAtOriginUpwards( &cam
+  CamR3_lookAtOriginUpwards( &s_cam
                            , TransformR3_rotateZ( R3_scale( CAM3D_DISTANCEFROMORIGIN    // View point.
                                                           , viewPoint
                                                           )
                                                 , rotationZ
                                                 )
-                           , cam_zoom                                       // Zoom
-                           , CAM3D_PROJECTION_PERSPECTIVE
+                           , s_cam_zoom                                       // Zoom
+                           , CAM_PROJECTION_PERSPECTIVE
                            ) ;
 }
 
@@ -222,11 +227,11 @@ set_world_mode
 {
   LOGI( "set_world_mode:: pWorldMode = %d", pWorldMode ) ;
 
-  if (pWorldMode == world_mode)
+  if (pWorldMode == s_world_mode)
     return ;
 
   // Start-up entering mode. Subscribe to newly needed services. Apply relevant configurations.
-  switch (world_mode = pWorldMode)
+  switch (s_world_mode = pWorldMode)
   {
     case WORLD_MODE_LAUNCH:
       launch_animStep = ANIMATION_SPIN_STEPS ;
@@ -234,23 +239,23 @@ set_world_mode
       // Gravity aware.
      	accel_data_service_subscribe( 0, accel_data_service_handler ) ;
     
-      // Activate on-second-change clock updates.
+      // Activate on-second-change s_clock updates.
       tick_timer_service_subscribe( SECOND_UNIT, tick_timer_service_handler ) ;
 
       clock_updateTime( ) ;
       break ;
 
     case WORLD_MODE_DYNAMIC:
-      user_secondsInactive = 0 ;   // Reset user inactivity counter.
+      s_user_secondsInactive = 0 ;   // Reset user inactivity counter.
       break ;
 
     case WORLD_MODE_PARK:
       park_animStep  = ANIMATION_SPIN_STEPS ;
-      park_animRange = spin_rotation - SPIN_ROTATION_STEADY ;    // From current rotation.
+      park_animRange = s_spin_rotation - SPIN_ROTATION_STEADY ;    // From current rotation.
       break ;
 
     case WORLD_MODE_STEADY:
-      // Stop previous SECOND_UNIT clock refresh rate.
+      // Stop previous SECOND_UNIT s_clock refresh rate.
       tick_timer_service_unsubscribe( ) ;
 
       // Gravity unaware.
@@ -258,10 +263,10 @@ set_world_mode
 
       // Next frame will be from the STEADY viewpoint.
       cam_config( &CAM3D_VIEWPOINT_STEADY                  // Unrotated ViewPoint
-                , spin_rotation = SPIN_ROTATION_STEADY   // ViewPoint rotation around Z axis.
+                , s_spin_rotation = SPIN_ROTATION_STEADY   // ViewPoint rotation around Z axis.
                 ) ;
 
-      // Activate on-minute-change clock updates.
+      // Activate on-minute-change s_clock updates.
       tick_timer_service_subscribe( MINUTE_UNIT, tick_timer_service_handler ) ;
       break ;
 
@@ -312,10 +317,10 @@ void
 world_initialize
 ( )
 {
-  Clock3D_initialize( ) ;
+  Clock3D_initialize( &s_clock ) ;
   sampler_initialize( ) ;
   interpolations_initialize( ) ;
-  Clock3D_config( DIGIT2D_CURVYSKIN ) ;
+  Clock3D_config( &s_clock, DIGIT2D_CURVYSKIN ) ;
 }
 
 
@@ -345,7 +350,7 @@ void
 world_finalize
 ( )
 {
-  Clock3D_finalize( ) ;
+  Clock3D_finalize( &s_clock ) ;
   sampler_finalize( ) ;
   interpolations_finalize( ) ;
 }
@@ -358,16 +363,16 @@ void
 world_update
 ( )
 {
-  Clock3D_updateAnimation( ANIMATION_FLIP_STEPS ) ;
+  Clock3D_updateAnimation( &s_clock, ANIMATION_FLIP_STEPS ) ;
 
-  if (world_mode != WORLD_MODE_STEADY)
+  if (s_world_mode != WORLD_MODE_STEADY)
   {
-    Clock3D_second100ths_update( ) ;
+    Clock3D_second100ths_update( &s_clock ) ;
 
     AccelData ad ;
 
     if ( accel_service_peek( &ad ) < 0          // Accel service not available.
-      || (world_mode == WORLD_MODE_PARK  &&  park_animStep < ACCEL_SAMPLER_CAPACITY)  // last frames of PARK.
+      || (s_world_mode == WORLD_MODE_PARK  &&  park_animStep < ACCEL_SAMPLER_CAPACITY)  // last frames of PARK.
        )
     {
       Sampler_push( sampler_accelX,  -81 ) ;   // STEADY viewPoint attractor.
@@ -396,17 +401,17 @@ world_update
 #endif
     }
 
-    // Adjust cam rotation.
+    // Adjust s_cam rotation.
     float cam_rotation ;
 
-    switch (world_mode)
+    switch (s_world_mode)
     {
       case WORLD_MODE_LAUNCH:
         if (launch_animStep >= 0)
           cam_rotation = SPIN_ROTATION_STEADY  +  (1.0 - spinRotationFraction[launch_animStep--]) * launch_animRange ;
         else
         {
-          cam_rotation = spin_rotation = SPIN_ROTATION_STEADY + launch_animRange ;
+          cam_rotation = s_spin_rotation = SPIN_ROTATION_STEADY + launch_animRange ;
           set_world_mode( WORLD_MODE_DYNAMIC ) ;
         }
 
@@ -414,16 +419,16 @@ world_update
   
       case WORLD_MODE_DYNAMIC:
         // Friction: gradualy decrease spin speed until it stops.
-        if (spin_speed > 0)
-          --spin_speed ;
+        if (s_spin_speed > 0)
+          --s_spin_speed ;
 
-        if (spin_speed < 0)
-          ++spin_speed ;
+        if (s_spin_speed < 0)
+          ++s_spin_speed ;
 
-        if (spin_speed != 0)
-          spin_rotation = FastMath_normalizeAngle( spin_rotation + (float)spin_speed * SPIN_ROTATION_QUANTA ) ;
+        if (s_spin_speed != 0)
+          s_spin_rotation = FastMath_normalizeAngle( s_spin_rotation + (float)s_spin_speed * SPIN_ROTATION_QUANTA ) ;
 
-        cam_rotation = spin_rotation ;
+        cam_rotation = s_spin_rotation ;
         break ;
 
       case WORLD_MODE_PARK:
@@ -442,7 +447,7 @@ world_update
         break ;
     }
 
-    if (world_mode != WORLD_MODE_STEADY)
+    if (s_world_mode != WORLD_MODE_STEADY)
       cam_config( &(R3){ .x = (float)(sampler_accelX->samplesAcum / sampler_accelX->samplesNum)
                        , .y =-(float)(sampler_accelY->samplesAcum / sampler_accelY->samplesNum)
                        , .z =-(float)(sampler_accelZ->samplesAcum / sampler_accelZ->samplesNum)
@@ -452,7 +457,7 @@ world_update
   }
 
   // this will queue a defered call to the world_draw( ) method.
-  layer_mark_dirty( world_layer ) ;
+  layer_mark_dirty( s_world_layer ) ;
 }
 
 
@@ -460,18 +465,21 @@ void
 world_update_timer_handler
 ( void *data )
 {
-  world_updateTimer = NULL ;
+  s_world_updateTimer = NULL ;
   world_update( ) ;
 
   // Call me again ?
-  if (world_mode != WORLD_MODE_STEADY  ||  Clock3D_isAnimated( ))
+  if (s_world_mode != WORLD_MODE_STEADY  ||  Clock3D_isAnimated( &s_clock ))
     // Schedule next world_update (next animation frame).
-    world_updateTimer = app_timer_register( ANIMATION_INTERVAL_MS
-                                          , world_update_timer_handler
-                                          , data
-                                          ) ;
+    s_world_updateTimer = app_timer_register( ANIMATION_INTERVAL_MS
+                                            , world_update_timer_handler
+                                            , data
+                                            ) ;
 }
 
+#ifdef LOG
+static int world_draw_count = 0 ;
+#endif
 
 void
 world_draw
@@ -486,11 +494,17 @@ world_draw
     graphics_context_set_antialiased( gCtx, false ) ;
 #endif
 
-  const GRect layerBounds = layer_get_bounds( me ) ;
-  const uint8_t w = layerBounds.size.w ;
-  const uint8_t h = layerBounds.size.h ;
- 
-  Clock3D_draw( gCtx, &cam, w, h, TRANSPARENCY_DEFAULT ) ;
+  Clock3D_draw( gCtx, &s_clock, &s_cam, unobstructed_screen.w, unobstructed_screen.h, TRANSPARENCY_DEFAULT ) ;
+}
+
+
+void
+unobstructed_area_change_handler
+( AnimationProgress progress
+, void             *context
+)
+{
+  unobstructed_screen = layer_get_unobstructed_bounds( s_window_layer ).size ;
 }
 
 
@@ -498,12 +512,17 @@ void
 window_load
 ( Window *window )
 {
-  Layer *window_root_layer = window_get_root_layer( window ) ;
+  s_window_layer      = window_get_root_layer( window ) ;
+  unobstructed_screen = layer_get_unobstructed_bounds( s_window_layer ).size ;
 
-  GRect bounds = layer_get_frame( window_root_layer ) ;
-  world_layer = layer_create( bounds ) ;
-  layer_set_update_proc( world_layer, world_draw ) ;
-  layer_add_child( window_root_layer, world_layer ) ;
+  GRect bounds = layer_get_frame( s_window_layer ) ;
+  s_world_layer = layer_create( bounds ) ;
+  layer_set_update_proc( s_world_layer, world_draw ) ;
+  layer_add_child( s_window_layer, s_world_layer ) ;
+
+  // Obstrution handling.
+  UnobstructedAreaHandlers unobstructed_area_handlers = { .change = unobstructed_area_change_handler } ;
+  unobstructed_area_service_subscribe( unobstructed_area_handlers, NULL ) ;
 
   // Become tap aware.
   accel_tap_service_subscribe( accel_tap_service_handler ) ;
@@ -515,16 +534,18 @@ window_load
 
 void
 window_unload
-( Window *window )
+( Window *s_window )
 {
   // Stop world animation.
-  if (world_updateTimer != NULL)
+  if (s_world_updateTimer != NULL)
   {
-    app_timer_cancel( world_updateTimer ) ;
-    world_updateTimer = NULL ;
+    app_timer_cancel( s_world_updateTimer ) ;
+    s_world_updateTimer = NULL ;
   }
 
-  // Stop clock.
+  unobstructed_area_service_unsubscribe( ) ;
+
+  // Stop s_clock.
   tick_timer_service_unsubscribe( ) ;
 
   // Gravity unaware.
@@ -533,7 +554,7 @@ window_unload
   // Tap unaware.
   accel_tap_service_unsubscribe( ) ;
 
-  layer_destroy( world_layer ) ;
+  layer_destroy( s_world_layer ) ;
 }
 
 
@@ -543,17 +564,17 @@ app_initialize
 {
   world_initialize( ) ;
 
-  window = window_create( ) ;
-  window_set_background_color( window, GColorBlack ) ;
+  s_window = window_create( ) ;
+  window_set_background_color( s_window, GColorBlack ) ;
  
-  window_set_window_handlers( window
+  window_set_window_handlers( s_window
                             , (WindowHandlers)
                               { .load   = window_load
                               , .unload = window_unload
                               }
                             ) ;
 
-  window_stack_push( window, false ) ;
+  window_stack_push( s_window, false ) ;
 }
 
 
@@ -561,8 +582,8 @@ void
 app_finalize
 ( void )
 {
-  window_stack_remove( window, false ) ;
-  window_destroy( window ) ;
+  window_stack_remove( s_window, false ) ;
+  window_destroy( s_window ) ;
   world_finalize( ) ;
 }
 
