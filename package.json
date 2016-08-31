@@ -1,14 +1,15 @@
 {
     "author": "Karambola",
-    "dependencies": {},
-    "files": [
-        "dist.zip"
-    ],
+    "dependencies": {
+        "karambola": "https://builds.cloudpebble.net/0839352c-5c43-4b4a-8c95-46da80bd2e50/package.tar.gz"
+    },
     "keywords": [],
-    "name": "karambola",
+    "name": "flipclock3d",
     "pebble": {
+        "displayName": "Fliping Clock 3D WatchFace",
+        "enableMultiJS": true,
         "messageKeys": [],
-        "projectType": "package",
+        "projectType": "native",
         "resources": {
             "media": []
         },
@@ -18,9 +19,10 @@
             "chalk",
             "diorite"
         ],
+        "uuid": "4736999a-9ce4-4973-97aa-fd60540cb2d4",
         "watchapp": {
-            "watchface": false
+            "watchface": true
         }
     },
-    "version": "1.0.0"
+    "version": "4.0.0"
 }
