@@ -3,7 +3,7 @@
    File     : main.c
    Author   : Afonso Santos, Portugal
 
-   Last revision: 09h55 August 31 2016
+   Last revision: 12h35 October 06 2016
 */
 
 #include <pebble.h>
@@ -52,20 +52,22 @@ float     *animRotationFraction    = NULL ;   // To be allocated at world_initia
 float     *animTranslationFraction = NULL ;   // To be allocated at world_initialize( ).
 
 // User related
-static int  s_user_secondsInactive  = 0 ;
+static int  s_user_secondsInactive          = 0 ;
+static int  s_user_secondsBeforeTapAllowed  = 0 ;
 
 
 // Spin(Z) CONSTANTS & variables
-#define   SPIN_ROTATION_QUANTA    0.0001
-#define   SPIN_ROTATION_STEADY   -DEG_045
-#define   SPIN_SPEED_AFTER_TWIST  400
+#define   SPIN_ROTATION_QUANTA      0.0001
+#define   SPIN_ROTATION_STEADY     -DEG_045
+#define   SPIN_SPEED_INCREMENT      500
+#define   SPIN_SPEED_MAX            1500
 
 static int     s_spin_speed     = 0 ;                      // Initial spin speed.
 static float   s_spin_rotation  = SPIN_ROTATION_STEADY ;   // Initial spin rotation angle allows to view hours/minutes/seconds faces.
 
 
 // Camera related
-#define  CAM3D_DISTANCEFROMORIGIN   (2.2 * CUBE_SIZE)
+#define  CAM3D_DISTANCEFROMORIGIN   (2.2f * CUBE_SIZE)
 #define  CAM3D_VIEWPOINT_STEADY     (R3){ .x = -0.1f, .y = 1.0f, .z = 0.7f }
 
 static CamR3    s_cam ;
@@ -97,55 +99,35 @@ static float  launch_animRange = DEG_090 ;
 void
 accel_tap_service_handler
 ( AccelAxisType  axis        // Process tap on ACCEL_AXIS_X, ACCEL_AXIS_Y or ACCEL_AXIS_Z
-, int32_t        direction   // Direction is 1 or -1
+, int32_t        direction   // Direction is 1 or -1 (ignored)
 )
 {
-  s_user_secondsInactive = 0 ;      // Tap event qualifies as active user interaction.
-
   switch (s_world_mode)
   {
-    case WORLD_MODE_LAUNCH:
-    case WORLD_MODE_PARK:
     case WORLD_MODE_DYNAMIC:
-      switch (axis)
+      if (s_user_secondsBeforeTapAllowed == 0)
       {
-        case ACCEL_AXIS_X:    // Punch: animate everything.
-          Clock3D_animateAll( &s_clock ) ;
-          break ;
+        s_spin_speed += SPIN_SPEED_INCREMENT ;
 
-        case ACCEL_AXIS_Y:    // Twist: spin.
-          s_spin_speed = SPIN_SPEED_AFTER_TWIST ;
-          break ;
-
-        case ACCEL_AXIS_Z:
-        default:
-          break ;
+        // Prevent exagerated (useless) spin speeds.
+        if (s_spin_speed > SPIN_SPEED_MAX)
+          s_spin_speed = SPIN_SPEED_MAX ;
       }
 
-      break ;
+      s_user_secondsBeforeTapAllowed += 3 ;   //  Prevent vibrating wrist environment (motorcycle, bycicle) to trigger too closely-spaced spin-ups in a row.
+    break ;
 
     case WORLD_MODE_STEADY:
-      switch (axis)
-      {
-        case ACCEL_AXIS_X:    // Punch: change the display type.
-          Clock3D_cycleDigitType( &s_clock ) ;
-          clock_updateTime( ) ;
-          break ;
+      set_world_mode( WORLD_MODE_LAUNCH ) ;
+    break ;
 
-        case ACCEL_AXIS_Y:    // Twist: change to LAUNCH mode.
-          set_world_mode( WORLD_MODE_LAUNCH ) ;
-          break ;
-
-        case ACCEL_AXIS_Z:
-        default:  // Unknown axis.
-          break ;
-      }
-
-      break ;
-
+    case WORLD_MODE_LAUNCH:
+    case WORLD_MODE_PARK:
     default:
-      break ;
+    break ;
   }
+
+  s_user_secondsInactive = 0 ;      // Tap event qualifies as active user interaction.
 }
 
 
@@ -163,15 +145,17 @@ tick_timer_service_handler
                           , tick_time->tm_sec    // seconds
                           ) ;
 
-  if (s_world_mode == WORLD_MODE_DYNAMIC)
-  {
-    if (s_spin_speed == 0)
-      ++s_user_secondsInactive ;
-  
-    // Auto-exit DYNAMIC mode on lack of user interaction.
-    if (s_user_secondsInactive > USER_SECONDSINACTIVE_MAX)
-      set_world_mode( WORLD_MODE_PARK ) ;
-  }
+  ++s_user_secondsInactive ;
+
+  if (s_user_secondsBeforeTapAllowed > 0)
+    --s_user_secondsBeforeTapAllowed ;
+
+  // Auto-exit DYNAMIC mode on lack of user interaction.
+  if ( s_world_mode == WORLD_MODE_DYNAMIC
+    && s_spin_speed == 0
+    && s_user_secondsInactive > USER_SECONDSINACTIVE_MAX
+     )
+    set_world_mode( WORLD_MODE_PARK ) ;
 
   // Trigger call to world update. Will launch dynamic mode if needed.
   if (s_world_updateTimer != NULL)
@@ -193,20 +177,18 @@ clock_updateTime
 
 void
 cam_config
-( R3         *viewPoint
-, const float rotationZ
+( const R3   *pViewPoint
+, const float pRotZrad
 )
 {
+  R3 scaledVP ;
+  R3_scaTo( &scaledVP, CAM3D_DISTANCEFROMORIGIN, pViewPoint ) ;
+
+  R3 rotatedVP ;
+  R3_rotZrad( &rotatedVP, &scaledVP, pRotZrad ) ;
+
   // setup 3D camera
-  CamR3_lookAtOriginUpwards( &s_cam
-                           , TransformR3_rotateZ( R3_scale( CAM3D_DISTANCEFROMORIGIN    // View point.
-                                                          , viewPoint
-                                                          )
-                                                , rotationZ
-                                                )
-                           , s_cam_zoom                                                 // Zoom
-                           , CAM_PROJECTION_PERSPECTIVE
-                           ) ;
+  CamR3_lookAtOriginUpwards( &s_cam, &rotatedVP, s_cam_zoom, CAM_PROJECTION_PERSPECTIVE ) ;
 }
 
 
@@ -232,16 +214,16 @@ set_world_mode
       tick_timer_service_subscribe( SECOND_UNIT, tick_timer_service_handler ) ;
 
       clock_updateTime( ) ;
-      break ;
+    break ;
 
     case WORLD_MODE_DYNAMIC:
       s_user_secondsInactive = 0 ;   // Reset user inactivity counter.
-      break ;
+    break ;
 
     case WORLD_MODE_PARK:
       park_animStep  = ANIMATION_SPIN_STEPS ;
       park_animRange = s_spin_rotation - SPIN_ROTATION_STEADY ;    // From current rotation.
-      break ;
+    break ;
 
     case WORLD_MODE_STEADY:
       // Stop previous SECOND_UNIT s_clock refresh rate.
@@ -257,11 +239,13 @@ set_world_mode
 
       // Activate on-minute-change s_clock updates.
       tick_timer_service_subscribe( MINUTE_UNIT, tick_timer_service_handler ) ;
-      break ;
+    break ;
 
     default:
-      break ;
+    break ;
   }
+
+  s_user_secondsBeforeTapAllowed = 0 ;   // After mode change allow for early spin-up TAP event.
 }
 
 
@@ -278,9 +262,9 @@ interpolations_initialize
                                    , ANIMATION_FLIP_STEPS
                                    ) ;
 
-  Interpolator_TrigonometricYoYo( animTranslationFraction = malloc((ANIMATION_FLIP_STEPS+1)*sizeof(float))
-                                , ANIMATION_FLIP_STEPS
-                                ) ;
+  Interpolator_SinYoYo( animTranslationFraction = malloc((ANIMATION_FLIP_STEPS+1)*sizeof(float))
+                      , ANIMATION_FLIP_STEPS
+                      ) ;
 }
 
 
@@ -403,22 +387,18 @@ world_update
           cam_rotation = s_spin_rotation = SPIN_ROTATION_STEADY + launch_animRange ;
           set_world_mode( WORLD_MODE_DYNAMIC ) ;
         }
-
-        break ;
+      break ;
   
       case WORLD_MODE_DYNAMIC:
         // Friction: gradualy decrease spin speed until it stops.
         if (s_spin_speed > 0)
           --s_spin_speed ;
 
-        if (s_spin_speed < 0)
-          ++s_spin_speed ;
-
         if (s_spin_speed != 0)
-          s_spin_rotation = FastMath_normalizeAngle( s_spin_rotation + (float)s_spin_speed * SPIN_ROTATION_QUANTA ) ;
+          s_spin_rotation = FastMath_normalizeAngleRad( s_spin_rotation + (float)s_spin_speed * SPIN_ROTATION_QUANTA ) ;
 
         cam_rotation = s_spin_rotation ;
-        break ;
+      break ;
 
       case WORLD_MODE_PARK:
         if (park_animStep >= 0)
@@ -428,12 +408,11 @@ world_update
           cam_rotation = SPIN_ROTATION_STEADY ;
           set_world_mode( WORLD_MODE_STEADY ) ;
         }
-
-        break ;
+      break ;
   
       default:
         cam_rotation = SPIN_ROTATION_STEADY ;
-        break ;
+      break ;
     }
 
     if (s_world_mode != WORLD_MODE_STEADY)

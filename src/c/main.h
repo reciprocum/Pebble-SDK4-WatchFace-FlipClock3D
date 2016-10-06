@@ -3,7 +3,7 @@
    File     : main.h
    Author   : Afonso Santos, Portugal
 
-   Last revision: 09h55 August 31 2016
+   Last revision: 12h35 October 06 2016
 */
 
 // User related
@@ -17,5 +17,5 @@
 
 // Animation related
 #define ANIMATION_INTERVAL_MS     40
-#define ANIMATION_FLIP_STEPS      50
+#define ANIMATION_FLIP_STEPS      25
 #define ANIMATION_SPIN_STEPS      75

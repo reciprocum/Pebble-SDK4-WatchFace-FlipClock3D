@@ -1,12 +1,12 @@
 {
-    "author": "Karambola",
+    "author": "Afonso Santos",
     "dependencies": {
-        "karambola": "https://builds.cloudpebble.net/0839352c-5c43-4b4a-8c95-46da80bd2e50/package.tar.gz"
+        "karambola": "https://builds.cloudpebble.net/e9d8f47b-3d21-4ed0-8713-abb4dfed1d81/package.tar.gz"
     },
     "keywords": [],
     "name": "flipclock3d",
     "pebble": {
-        "displayName": "Fliping Clock 3D WatchFace",
+        "displayName": "FlipClock 3D",
         "enableMultiJS": true,
         "messageKeys": [],
         "projectType": "native",
@@ -24,5 +24,5 @@
             "watchface": true
         }
     },
-    "version": "4.0.0"
+    "version": "4.4.0"
 }
